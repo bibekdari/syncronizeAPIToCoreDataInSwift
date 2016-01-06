@@ -17,7 +17,9 @@ class ViewController: UIViewController {
         let appDelegate = UIApplication.sharedApplication().delegate as! AppDelegate
         let fetchRequest = NSFetchRequest(entityName: "Person")
         let sortDescriptor = NSSortDescriptor(key: "createdAt", ascending: true)
+        let predicate = NSPredicate(format: "delete = %@", false)
         fetchRequest.sortDescriptors = [sortDescriptor]
+        fetchRequest.predicate = predicate
         
         let fetchedResultController = NSFetchedResultsController(fetchRequest: fetchRequest, managedObjectContext: appDelegate.managedObjectContext, sectionNameKeyPath: nil, cacheName: nil)
         
@@ -49,6 +51,9 @@ class ViewController: UIViewController {
             let recordToUpdate = self.fetchedResultsController.objectAtIndexPath(indexPath!) as! Person
             viewController.person = recordToUpdate
         }
+    }
+    @IBAction func syncDataPressed(sender: AnyObject) {
+        SyncCoreData.singletonInstance.startSync()
     }
 }
 
@@ -141,8 +146,8 @@ extension ViewController: UITableViewDataSource {
     func tableView(tableView: UITableView, commitEditingStyle editingStyle: UITableViewCellEditingStyle, forRowAtIndexPath indexPath: NSIndexPath) {
         if editingStyle == UITableViewCellEditingStyle.Delete {
             let deletingRecord = fetchedResultsController.objectAtIndexPath(indexPath) as! Person
-            self.fetchedResultsController.managedObjectContext.deleteObject(deletingRecord)
-            
+            //self.fetchedResultsController.managedObjectContext.deleteObject(deletingRecord)
+            deletingRecord.delete = true
         }
     }
     

@@ -37,7 +37,7 @@ class UpdateViewController: UIViewController {
 
             person.name = name
             person.address = address
-            person.updatedAt = NSDate().timeIntervalSince1970
+            person.updatedAt = NSDate()
             
             print("After update:\(person.updatedAt)")
 

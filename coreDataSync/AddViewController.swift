@@ -41,8 +41,8 @@ class AddViewController: UIViewController {
             
             newPerson.name = name
             newPerson.address = address
-            newPerson.createdAt = NSDate().timeIntervalSince1970
-            newPerson.updatedAt = NSDate().timeIntervalSince1970
+            newPerson.createdAt = NSDate()
+            newPerson.updatedAt = NSDate()
             
             print("After create:\(newPerson.updatedAt)")
 
