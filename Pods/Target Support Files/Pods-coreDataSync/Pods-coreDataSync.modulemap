@@ -1,0 +1,6 @@
+framework module Pods_coreDataSync {
+  umbrella header "Pods-coreDataSync-umbrella.h"
+
+  export *
+  module * { export * }
+}
