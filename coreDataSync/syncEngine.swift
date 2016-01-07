@@ -30,18 +30,17 @@ class SyncCoreData {
     lazy private var classesToSync = {
         return (UIApplication.sharedApplication().delegate as! AppDelegate).managedObjectModel.entitiesByName
     }()
-    private var responseCount = [Bool]()
+    
     private let appDelegate: AppDelegate!
-    
+    private var syncingStatus = false
+    private var responseCount = [Bool]()
+    private var syncAction = [Bool]()
     private var pullResponseJsons = [String: JSON]()
-    
+    private var pushRequestObjects = [NSManagedObject]()
     private var dateFormatter = NSDateFormatter()
-    
     private var lastSyncDate: NSDate?
     private var startSyncDate: NSDate?
-    private var pushRequestData = [AnyObject]()
-    private var syncAction = [Bool]()
-    private var syncingStatus = false
+    
     
     init(){
         appDelegate = UIApplication.sharedApplication().delegate as! AppDelegate
@@ -64,41 +63,36 @@ class SyncCoreData {
     }
     
     func startSync(){
-        if !syncingStatus {
-            syncingStatus = true
-            pullResponseJsons.removeAll()
-            lastSyncDate = nil
-            startSyncDate = nil
-            responseCount.removeAll()
-            syncAction.removeAll()
-            pushRequestData.removeAll()
+        if !self.syncingStatus && self.isConnectedToNetwork() {
+            self.resetAllVariables()
+            self.setLastDateSynced()
             
-            appDelegate.saveContext()
-            if self.isConnectedToNetwork() {
-                //        let date1 = NSDate()
-                //        var date2 = date1.timeIntervalSince1970
-                //        date2 = date2.advancedBy(24*60*60*5)
-                //        if date1.compare(NSDate(timeIntervalSince1970: date2)) == NSComparisonResult.OrderedDescending {
-                //            print("date 1 greater than date 2")
-                //        }
-                startSyncDate = NSDate()
-                setLastDateSynced()
-                //self.syncCompleted()
-                classesToSync.removeValueForKey("SyncInfo")
-                for (className, _) in classesToSync {
-                    self.getDataFromRemote(className, parameters: getDataFetchParameters())
-                    self.dataToPushToRemote(className)
-                }
-                self.pushDataToRemote(["requests": pushRequestData])
-            } else {
-                print("no internet connection")
+            var dataArray = [AnyObject]()
+            
+            for (className, _) in self.classesToSync {
+                self.getDataFromRemote(className, parameters: getDataFetchParameters())
+                
+                dataArray = self.dataToPushToRemote(className, dataArray: dataArray)
             }
+            self.pushDataToRemote(["requests": dataArray])
         }
     }
     
-    private func dataToPushToRemote(className: String) {
+    private func resetAllVariables(){
+        self.appDelegate.saveContext()
+        self.classesToSync.removeValueForKey("SyncInfo")
+        self.syncingStatus = !self.syncingStatus
+        self.pullResponseJsons.removeAll()
+        self.lastSyncDate = nil
+        self.startSyncDate = NSDate()
+        self.responseCount.removeAll()
+        self.syncAction.removeAll()
+        self.pushRequestObjects.removeAll()
+    }
+    
+    private func dataToPushToRemote(className: String, dataArray: [AnyObject]) -> [AnyObject] {
         let parseData = ParseData()
-        
+        var dataArrayToAddData = dataArray
         if let objectsToCreateInRemote = objectsToCreate(className) {
             
             for object in objectsToCreateInRemote {
@@ -106,7 +100,8 @@ class SyncCoreData {
                 dictForObject["method"] = "POST"
                 dictForObject["path"] = "/\(parseData.version)/classes/\(className)"
                 dictForObject["body"] = self.parametersForNewObject(object)
-                self.pushRequestData.append(dictForObject)
+                dataArrayToAddData.append(dictForObject)
+                self.pushRequestObjects.append(object)
             }
         }
         if let _ = self.lastSyncDate {
@@ -116,7 +111,8 @@ class SyncCoreData {
                     dictForObject["method"] = "PUT"
                     dictForObject["path"] = "/\(parseData.version)/classes/\(className)/\(object.valueForKey("objectIDInAPI")!)"
                     dictForObject["body"] = self.parametersForNewObject(object)
-                    self.pushRequestData.append(dictForObject)
+                    dataArrayToAddData.append(dictForObject)
+                    self.pushRequestObjects.append(object)
                 }
             }
             
@@ -125,24 +121,25 @@ class SyncCoreData {
                     var dictForObject = [String: AnyObject]()
                     dictForObject["method"] = "DELETE"
                     dictForObject["path"] = "/\(parseData.version)/classes/\(className)/\(object.valueForKey("objectIDInAPI")!)"
-                    self.pushRequestData.append(dictForObject)
+                    dataArrayToAddData.append(dictForObject)
+                    self.pushRequestObjects.append(object)
                 }
             }
         }
+        return dataArrayToAddData
     }
     
     private func pushDataToRemote(parameters: [String: AnyObject]?) {
         let URl = "https://api.parse.com/1/batch"
         let headers = createHeaders()
-        // print(lastSyncDate)
-        print(parameters)
-        if pushRequestData.count > 0 {
+        if pushRequestObjects.count > 0 {
             Alamofire.request(.POST, URl, parameters: parameters, encoding: .JSON, headers: headers).responseJSON { (response) -> Void in
                 switch response.result {
                 case .Success(let data):
                     let json = JSON(data)
                     self.syncAction.append(true)
-                    print(json)
+                    self.processPushResponses(json)
+                    
                     if self.syncAction.count == 2 {
                         self.syncCompleted()
                     }
@@ -159,6 +156,37 @@ class SyncCoreData {
         
     }
     
+    private func processPushResponses(json: JSON){
+        self.appDelegate.saveContext()
+        for (jsonIndex, jsonEach)  in json {
+           
+            let managedObject = self.pushRequestObjects[Int(jsonIndex)!]
+            for (index,value) in jsonEach{
+                                if index == "success" {
+                    if value.count == 0 {
+                        managedObject.managedObjectContext?.deleteObject(managedObject)
+                        print("object deleted")
+                    } else if value["objectId"].isExists() {
+                        managedObject.setValue(String(value["objectId"]), forKey: "objectIDInAPI")
+                        managedObject.setValue(lastSyncDate, forKey: "updatedAt")
+                        print("object created")
+                    } else {
+                        print("object updated")
+                    }
+                } else {
+                    if "\(jsonEach["error"]["code"])" == "101" {
+                        managedObject.managedObjectContext?.deleteObject(managedObject)
+                        print("object locally deleted")
+                    }
+                    print("ERROR: \(jsonEach["error"]["error"]) Code \(jsonEach["error"]["code"])")
+                }
+            }
+            
+                    }
+        
+        
+        
+    }
     private func parametersForNewObject(managedObject: NSManagedObject) -> [String: AnyObject]? {
         var jsonObject = [String: AnyObject]()
         
@@ -194,13 +222,12 @@ class SyncCoreData {
     private func objectsToDelete(className: String) -> [NSManagedObject]? {
         var predicate: NSPredicate?
         if let lastSyncDate = lastSyncDate {
-            predicate = NSPredicate(format: "updatedAt > %@ AND delete = YES", lastSyncDate)
+            predicate = NSPredicate(format: "delete = YES", lastSyncDate)
         }
         return fetchDataFromCoreData(className, predicate: predicate)
     }
     
     private func fetchDataFromCoreData(className: String, predicate: NSPredicate?) -> [NSManagedObject]? {
-        //print(predicate)
         let fetchRequest = NSFetchRequest(entityName: className)
         fetchRequest.predicate = predicate
         do {
@@ -213,12 +240,6 @@ class SyncCoreData {
         }
         return nil
     }
-    //    private func objectsToDelete() -> [NSManagedObject] {
-    //
-    //    }
-    //    private func objectsToUpdate() -> [NSManagedObject] {
-    //
-    //    }
     
     private func setLastDateSynced() {
         let fetchRequest = NSFetchRequest(entityName: "SyncInfo")
@@ -247,10 +268,8 @@ class SyncCoreData {
                 if json["results"].count != 0 {
                     self.pullResponseJsons[className] = json
                 }
-                //print(self.responseCount.count)
-                //print(self.classesToSync.count)
                 if self.responseCount.count == self.classesToSync.count {
-                    self.processResponse()
+                    self.processPullResponse()
                 }
             case .Failure(let errors):
                 print("Request failed with error for entity: \(className): \(errors)")
@@ -258,7 +277,7 @@ class SyncCoreData {
         }
     }
     
-    private func processResponse(){
+    private func processPullResponse(){
         for (className, json) in pullResponseJsons {
             for (_ ,object) in json["results"] {
                 let objectId = object["objectId"].stringValue
@@ -279,11 +298,8 @@ class SyncCoreData {
                             newObject.objectIDInAPI = objectId
                             newObject.name = object["name"].stringValue
                             newObject.address = object["address"].stringValue
-                            print(self.dateUsingStringFromAPI(object["createdAt"].stringValue))
                             newObject.createdAt = (self.dateUsingStringFromAPI(object["createdAt"].stringValue))
-                            
                             newObject.updatedAt = self.startSyncDate!
-                            print(object["createdAt"].stringValue)
                         }else {
                             print("error in creating object")
                         }
@@ -308,25 +324,10 @@ class SyncCoreData {
         let entityDesc = NSEntityDescription.entityForName("SyncInfo", inManagedObjectContext: appDelegate.managedObjectContext)
         let syncDateObject = SyncInfo(entity: entityDesc!, insertIntoManagedObjectContext: appDelegate.managedObjectContext)
         syncDateObject.syncDate = self.startSyncDate
-        appDelegate.saveContext()
-        pullResponseJsons.removeAll()
-        lastSyncDate = nil
-        startSyncDate = nil
-        responseCount.removeAll()
-        syncAction.removeAll()
-        pushRequestData.removeAll()
-        syncingStatus = false
-        //        let fetchRequest = NSFetchRequest(entityName: "SyncInfo")
-        //        do {
-        //            let results = try appDelegate.managedObjectContext.executeFetchRequest(fetchRequest) as! [NSManagedObject]
-        //            for result: NSManagedObject in results {
-        //                print(result)
-        //                print(result.valueForKey("syncDate"))
-        //            }
-        //        } catch {
-        //            print(error)
-        //        }
-        //        print("_____")
+
+        self.resetAllVariables()
+        
+        print("Sync complete")
     }
     
     private func createNSManagedObjectForClass(className: String) -> NSManagedObject? {
@@ -373,31 +374,6 @@ class SyncCoreData {
         let parseData = ParseData()
         return ["X-Parse-Application-Id" : parseData.appID , "X-Parse-REST-API-Key" : parseData.restKey]
     }
-    //    private func getLastDateSyncedFromServer() -> NSDate? {
-    //        return self.getSyncDate(false)
-    //    }
-    //
-    //    private func getLastDateSyncedToServer() -> NSDate? {
-    //        return self.getSyncDate(true)
-    //    }
-    //
-    //    private func getSyncDate(isToServerFromLocal: Bool) -> NSDate? {
-    //        let fetchRequest = NSFetchRequest(entityName: "syncInfo")
-    //        let sortDesctiptor = NSSortDescriptor(key: "syncDate", ascending: false)
-    //        let predicate = NSPredicate(format: "toOrFrom = %@", isToServerFromLocal)
-    //        fetchRequest.sortDescriptors = [sortDesctiptor]
-    //        fetchRequest.predicate = predicate
-    //
-    //        do {
-    //            let result = try appDelegate.managedObjectContext.executeFetchRequest(fetchRequest) as! [SyncInfo]
-    //            if let date = result.first?.syncDate {
-    //                return NSDate(timeIntervalSince1970: date)
-    //            }
-    //        } catch {
-    //            print(error)
-    //        }
-    //        return nil
-    //   }
     
     private func getLastUpdatedOrCreatedeDateOfClassInCoreData(className: String) -> NSDate?{
         let fetchRequest = NSFetchRequest(entityName: className)
@@ -420,7 +396,6 @@ class SyncCoreData {
         var URL = String()
         let parseData = ParseData()
         URL = URL +  "\(parseData.baseURL)\(parseData.version)/classes/\(className)/"
-        //print(URL)
         return URL
     }
 }

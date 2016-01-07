@@ -89,7 +89,9 @@ extension ViewController: NSFetchedResultsControllerDelegate {
         case .Update:
             if let updateIndexPath = indexPath {
                 let cell = tableView.cellForRowAtIndexPath(updateIndexPath)
-                configureCell(cell!, indexPath: updateIndexPath)
+                if let cell = cell {
+                    configureCell(cell, indexPath: updateIndexPath)
+                }
             }
         case .Move:
             if let moveIndexPath = indexPath {
