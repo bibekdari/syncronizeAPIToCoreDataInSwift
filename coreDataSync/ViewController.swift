@@ -29,8 +29,8 @@ class ViewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        // Do any additional setup after loading the view, typically from a nib.
         SyncCoreData.singletonInstance.startSync()
+        
         do {
             try self.fetchedResultsController.performFetch()
         } catch {
@@ -63,8 +63,6 @@ extension ViewController {
     private func saveManagedObjectContext() {
         let appDelegate = UIApplication.sharedApplication().delegate as! AppDelegate
         appDelegate.saveContext()
-//        let managedObjectContext = appDelegate.managedObjectContext
-//        managedObjectContext.
     }
     
 }
@@ -148,7 +146,6 @@ extension ViewController: UITableViewDataSource {
     func tableView(tableView: UITableView, commitEditingStyle editingStyle: UITableViewCellEditingStyle, forRowAtIndexPath indexPath: NSIndexPath) {
         if editingStyle == UITableViewCellEditingStyle.Delete {
             let deletingRecord = fetchedResultsController.objectAtIndexPath(indexPath) as! Person
-            //self.fetchedResultsController.managedObjectContext.deleteObject(deletingRecord)
             deletingRecord.delete = true
         }
     }

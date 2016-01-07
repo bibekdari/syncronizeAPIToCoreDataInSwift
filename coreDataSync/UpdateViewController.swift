@@ -33,13 +33,12 @@ class UpdateViewController: UIViewController {
         let name = textFieldName.text!
         let address = textFieldAddress.text!
         if !(name.isEmpty || address.isEmpty) {
-            print("Before update:\(person.updatedAt)")
-
+            
             person.name = name
             person.address = address
             person.updatedAt = NSDate()
             
-            print("After update:\(person.updatedAt)")
+            
 
             navigationController?.popViewControllerAnimated(true)
         }

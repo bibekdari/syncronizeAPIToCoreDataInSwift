@@ -44,8 +44,6 @@ class AddViewController: UIViewController {
             newPerson.createdAt = NSDate()
             newPerson.updatedAt = NSDate()
             
-            print("After create:\(newPerson.updatedAt)")
-
             navigationController?.popViewControllerAnimated(true)
 
         }
