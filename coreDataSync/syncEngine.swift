@@ -40,10 +40,13 @@ class SyncCoreData {
     private var dateFormatter = NSDateFormatter()
     private var lastSyncDate: NSDate?
     private var startSyncDate: NSDate?
+    private var privateManagedObjectContext: NSManagedObjectContext!
     
     
     init(){
         appDelegate = UIApplication.sharedApplication().delegate as! AppDelegate
+        privateManagedObjectContext = NSManagedObjectContext(concurrencyType: NSManagedObjectContextConcurrencyType.PrivateQueueConcurrencyType)
+        privateManagedObjectContext.parentContext = appDelegate.managedObjectContext
     }
     
     func isConnectedToNetwork() -> Bool {
@@ -159,10 +162,10 @@ class SyncCoreData {
     private func processPushResponses(json: JSON){
         self.appDelegate.saveContext()
         for (jsonIndex, jsonEach)  in json {
-           
+            
             let managedObject = self.pushRequestObjects[Int(jsonIndex)!]
             for (index,value) in jsonEach{
-                                if index == "success" {
+                if index == "success" {
                     if value.count == 0 {
                         managedObject.managedObjectContext?.deleteObject(managedObject)
                         print("object deleted")
@@ -182,7 +185,7 @@ class SyncCoreData {
                 }
             }
             
-                    }
+        }
         
         
         
@@ -220,10 +223,7 @@ class SyncCoreData {
     }
     
     private func objectsToDelete(className: String) -> [NSManagedObject]? {
-        var predicate: NSPredicate?
-        if let lastSyncDate = lastSyncDate {
-            predicate = NSPredicate(format: "delete = YES", lastSyncDate)
-        }
+        let predicate = NSPredicate(format: "delete = YES")
         return fetchDataFromCoreData(className, predicate: predicate)
     }
     
@@ -231,7 +231,7 @@ class SyncCoreData {
         let fetchRequest = NSFetchRequest(entityName: className)
         fetchRequest.predicate = predicate
         do {
-            let results = try appDelegate.managedObjectContext.executeFetchRequest(fetchRequest) as! [NSManagedObject]
+            let results = try privateManagedObjectContext.executeFetchRequest(fetchRequest) as! [NSManagedObject]
             if results.count > 0 {
                 return results
             }
@@ -246,7 +246,7 @@ class SyncCoreData {
         let sortDesctiptor = NSSortDescriptor(key: "syncDate", ascending: false)
         fetchRequest.sortDescriptors = [sortDesctiptor]
         do {
-            let result = try appDelegate.managedObjectContext.executeFetchRequest(fetchRequest) as! [SyncInfo]
+            let result = try privateManagedObjectContext.executeFetchRequest(fetchRequest) as! [SyncInfo]
             if let date = result.first?.syncDate {
                 lastSyncDate = date
             }
@@ -285,21 +285,14 @@ class SyncCoreData {
                 let predicate = NSPredicate(format: "objectIDInAPI = %@", objectId)
                 fetchRequest.predicate = predicate
                 fetchRequest.fetchLimit = 1
+                
                 do {
-                    let result = try appDelegate.managedObjectContext.executeFetchRequest(fetchRequest) as! [Person]
-                    if let person = result.first {
-                        person.name = object["name"].stringValue
-                        person.address = object["address"].stringValue
-                        let updatedDate = self.dateUsingStringFromAPI(object["updatedAt"].stringValue)
-                        person.updatedAt = updatedDate
+                    let result = try privateManagedObjectContext.executeFetchRequest(fetchRequest) as! [NSManagedObject]
+                    if let managedObject = result.first {
+                        self.assignAttribueValueInObject(managedObject, json: object)
                     }else {
                         if let newManagedObject = self.createNSManagedObjectForClass(className){
-                            let newObject = newManagedObject as! Person
-                            newObject.objectIDInAPI = objectId
-                            newObject.name = object["name"].stringValue
-                            newObject.address = object["address"].stringValue
-                            newObject.createdAt = (self.dateUsingStringFromAPI(object["createdAt"].stringValue))
-                            newObject.updatedAt = self.startSyncDate!
+                            self.assignAttribueValueInObject(newManagedObject, json: object)
                         }else {
                             print("error in creating object")
                         }
@@ -310,7 +303,7 @@ class SyncCoreData {
             }
         }
         do {
-            try appDelegate.managedObjectContext.save()
+            try privateManagedObjectContext.save()
             self.syncAction.append(true)
             if self.syncAction.count == 2 {
                 self.syncCompleted()
@@ -320,20 +313,90 @@ class SyncCoreData {
         }
     }
     
+    private func assignAttribueValueInObject(managedObject: NSManagedObject, json: JSON) {
+        //let desc = NSEntityDescription.entityForName("Person", in: appDelegate.)
+        var attributes = managedObject.entity.attributesByName
+        //let managedObjectDefault = NSManagedObject(entity: NSEntityDescription.entityForName(className, in: appDelegate.)!, insertInto: appDelegate.)
+        //var attributes = desc?.attributesByName
+        attributes.removeValueForKey("delete")
+        attributes.removeValueForKey("createdAt")
+        attributes.removeValueForKey("updatedAt")
+        attributes.removeValueForKey("objectIDInAPI")
+        
+        for (attribute, attributeDescription) in attributes {
+            if let value: String = json[attribute].stringValue {
+                switch attributeDescription.attributeType.hashValue {
+//                case 0:
+//                    print("UndefinedAttributeType")
+                case 1...3:
+                    print("IntegerAttributeType")
+                    managedObject.setValue(Int(value), forKey: attribute)
+                case 4, 6:
+                    print("DecimalAttributeType")
+                    managedObject.setValue(Float(value), forKey: attribute)
+                case 5:
+                    print("DoubleAttributeType")
+                    managedObject.setValue(Double(value), forKey: attribute)
+                case 7:
+                    print("StringAttributeType")
+                    managedObject.setValue(value, forKey: attribute)
+                case 8:
+                    print("BooleanAttributeType")
+                    if value == "true" || value == "True" || value == "Yes" || value == "YES" || value == "TRUE" || value == "1" {
+                        managedObject.setValue(true, forKey: attribute)
+                    } else {
+                        managedObject.setValue(false, forKey: attribute)
+                    }
+                case 9:
+                    print("DateAttributeType")
+                    //                        if value is NSDate {
+                    //                            //return true
+                    //                        } else if value is String{
+                    //                            let dateFormatter = NSDateFormatter()
+                    //                            dateFormatter.dateFormat = "yyyy-MM-dd"
+                    //                            //Parse into NSDate
+                    //                            let dateFromString : NSDate? = dateFormatter.dateFromString(value as! String)
+                    //                            //Return Parsed Date
+                    //                            if let _ = dateFromString {
+                    //                                //return true
+                    //                            }
+                    //                        }
+                    //return false
+                    
+//                case 10:
+//                    print("BinaryDataAttributeType")
+//                    //return false
+//                case 11:
+//                    print("TransformableAttributeType")
+//                    //return false
+//                case 12:
+//                    print("ObjectIDAttributeType")
+//                    //return false
+                default:
+                    print("Not in list")
+                    managedObject.setValue(nil, forKey: attribute)
+                }
+            }
+            else {
+                managedObject.setValue(nil, forKey: attribute)
+            }
+        }
+    }
+    
     private func syncCompleted(){
-        let entityDesc = NSEntityDescription.entityForName("SyncInfo", inManagedObjectContext: appDelegate.managedObjectContext)
-        let syncDateObject = SyncInfo(entity: entityDesc!, insertIntoManagedObjectContext: appDelegate.managedObjectContext)
+        let entityDesc = NSEntityDescription.entityForName("SyncInfo", inManagedObjectContext : privateManagedObjectContext)
+        let syncDateObject = SyncInfo(entity: entityDesc!, insertIntoManagedObjectContext: privateManagedObjectContext)
         syncDateObject.syncDate = self.startSyncDate
-
+        
         self.resetAllVariables()
         
         print("Sync complete")
     }
     
     private func createNSManagedObjectForClass(className: String) -> NSManagedObject? {
-        let entityDescription = NSEntityDescription.entityForName(className, inManagedObjectContext: appDelegate.managedObjectContext)
+        let entityDescription = NSEntityDescription.entityForName(className, inManagedObjectContext: privateManagedObjectContext)
         if let entityDescription = entityDescription {
-            let managedObject = NSManagedObject(entity: entityDescription, insertIntoManagedObjectContext: appDelegate.managedObjectContext)
+            let managedObject = NSManagedObject(entity: entityDescription, insertIntoManagedObjectContext: privateManagedObjectContext)
             return managedObject
         }
         return nil
@@ -382,9 +445,10 @@ class SyncCoreData {
         fetchRequest.fetchLimit = 1
         
         do {
-            let result = try appDelegate.managedObjectContext.executeFetchRequest(fetchRequest) as! [Person]
-            if let date = result.first?.updatedAt {
-                return date
+            let result = try privateManagedObjectContext.executeFetchRequest(fetchRequest) as! [NSManagedObject]
+            if let date = result.first?.valueForKey("updatedAt") {
+                
+                //return date
             }
         } catch {
             print(error)
